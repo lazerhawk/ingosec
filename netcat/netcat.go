@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -72,20 +73,63 @@ func serverLoop() {
 
 func handleConnection(conn net.Conn) {
 	// check for upload
+	if len(uploadDestination) > 0 {
+		buffer := ""
+		data := make([]byte, 1024)
+		for {
+			size, err := conn.Read(data)
+			if err != nil {
+				break
+			} else {
+				buffer += string(data[:size])
+			}
+		}
+		err := ioutil.WriteFile(uploadDestination, []byte(buffer), 0777)
+		if err != nil {
+			fmt.Fprintf(conn, "Failed to save file to %s\r\n", uploadDestination)
+		}
+		fmt.Fprintf(conn, "Successfully saved file to %s\r\n", uploadDestination)
+	}
 	// check for command execution
+	if len(execute) > 0 {
+		cmdOutput := runCommand(execute)
+		fmt.Fprintf(conn, cmdOutput)
+	}
 	// loop if cmd shell was requested
+	if command {
+		for {
+			fmt.Fprintf(conn, "<GNC:#> ")
+			data := make([]byte, 1024)
+			buffer := ""
+		ReadLoop:
+			for {
+				size, err := conn.Read(data)
+				if err != nil {
+					panic(err)
+				}
+				buffer += string(data[:size])
+				for _, v := range data {
+					if v == '\n' {
+						break ReadLoop
+					}
+				}
+			}
+			cmdOutput := runCommand(buffer)
+			fmt.Fprintf(conn, cmdOutput)
+		}
+	}
 }
 
-func runCommand(command string) {
+func runCommand(command string) string {
 	command = strings.Trim(command, " ")
+	command = strings.Trim(command, "\n")
 
-	//run the command using os
 	cmd := exec.Command(command)
 	cmdOut, err := cmd.Output()
 	if err != nil {
-		panic(err)
+		cmdOut = []byte("Failed to execute command: " + command)
 	}
-	fmt.Println(string(cmdOut))
+	return string(cmdOut)
 }
 
 func readRaw() string {
@@ -109,7 +153,7 @@ func clientSender() {
 	for {
 		buffer = readRaw()
 		if len(buffer) > 0 {
-			fmt.Fprintf(conn, buffer+"\n")
+			fmt.Fprintln(conn, buffer)
 		}
 		recvLen := 1
 		response := ""
